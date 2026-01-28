@@ -12,7 +12,7 @@ A web application that converts voice descriptions into AI-generated sticker des
 
 ## Tech Stack
 
-- Next.js 14 / React 18 / TypeScript
+- Next.js 16 / React 19 / TypeScript
 - Tailwind CSS
 - OpenAI API (DALL-E 3)
 - Web Bluetooth API

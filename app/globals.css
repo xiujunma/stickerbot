@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@theme {
+  --color-candy-pink: #ff6b9d;
+  --color-candy-purple: #c44cff;
+  --color-candy-blue: #4cc9ff;
+  --color-candy-green: #4cff9d;
+  --color-candy-yellow: #ffe14c;
+  --color-candy-orange: #ff9d4c;
+}
+
+@layer utilities {
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(1.5);
+      opacity: 0;
+    }
+  }
+
+  @keyframes bounce-gentle {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-8px);
+    }
+  }
+
+  @keyframes wiggle {
+    0%, 100% {
+      transform: rotate(-3deg);
+    }
+    50% {
+      transform: rotate(3deg);
+    }
+  }
+
+  @keyframes rainbow-border {
+    0% {
+      border-color: var(--color-candy-pink);
+    }
+    20% {
+      border-color: var(--color-candy-orange);
+    }
+    40% {
+      border-color: var(--color-candy-yellow);
+    }
+    60% {
+      border-color: var(--color-candy-green);
+    }
+    80% {
+      border-color: var(--color-candy-blue);
+    }
+    100% {
+      border-color: var(--color-candy-pink);
+    }
+  }
+
+  @keyframes sparkle {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(1.2);
+    }
+  }
+
+  .animate-pulse-ring {
+    animation: pulse-ring 1s ease-out infinite;
+  }
+
+  .animate-bounce-gentle {
+    animation: bounce-gentle 2s ease-in-out infinite;
+  }
+
+  .animate-wiggle {
+    animation: wiggle 0.5s ease-in-out infinite;
+  }
+
+  .animate-rainbow-border {
+    animation: rainbow-border 3s linear infinite;
+  }
+
+  .animate-sparkle {
+    animation: sparkle 1.5s ease-in-out infinite;
+  }
+
+  .bg-gradient-candy {
+    background: linear-gradient(135deg, #fff5f8 0%, #f0f7ff 50%, #f5fff0 100%);
+  }
+
+  .bg-gradient-button {
+    background: linear-gradient(135deg, var(--color-candy-pink) 0%, var(--color-candy-purple) 100%);
+  }
+
+  .bg-gradient-mic {
+    background: linear-gradient(135deg, var(--color-candy-blue) 0%, var(--color-candy-purple) 100%);
+  }
+
+  .bg-gradient-print {
+    background: linear-gradient(135deg, var(--color-candy-green) 0%, var(--color-candy-blue) 100%);
+  }
+
+  .text-gradient-rainbow {
+    background: linear-gradient(90deg, var(--color-candy-pink), var(--color-candy-orange), var(--color-candy-yellow), var(--color-candy-green), var(--color-candy-blue), var(--color-candy-purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .shadow-candy {
+    box-shadow: 0 8px 24px -4px rgba(255, 107, 157, 0.3), 0 4px 8px -2px rgba(196, 76, 255, 0.2);
+  }
+
+  .shadow-candy-lg {
+    box-shadow: 0 12px 32px -4px rgba(255, 107, 157, 0.4), 0 8px 16px -4px rgba(196, 76, 255, 0.3);
+  }
+}

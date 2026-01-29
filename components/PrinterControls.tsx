@@ -16,6 +16,16 @@ export default function PrinterControls({ imageUrl }: PrinterControlsProps) {
   const [error, setError] = useState<string | null>(null);
   const [isSupported, setIsSupported] = useState(true);
 
+  const [options, setOptions] = useState({
+    dither: "atkinson" as const,
+    contrast: 20,
+    brightness: 0,
+    sharpen: 30,
+    energy: 120, // slightly higher than default 96 for better darkness
+  });
+
+  const [showSettings, setShowSettings] = useState(false);
+
   useEffect(() => {
     const printer = getCatPrinter();
     setIsSupported(printer.isSupported());
@@ -59,8 +69,14 @@ export default function PrinterControls({ imageUrl }: PrinterControlsProps) {
     setPrintProgress(0);
 
     try {
-      const { bitmap, width, height } = await processImageForPrinter(imageUrl);
-      await printer.printImage(bitmap, width, height, (progress) => {
+      const { bitmap, width, height } = await processImageForPrinter(imageUrl, {
+        dither: options.dither,
+        contrast: options.contrast,
+        brightness: options.brightness,
+        sharpen: options.sharpen,
+      });
+
+      await printer.printImage(bitmap, width, height, options.energy, (progress) => {
         setPrintProgress(progress);
       });
     } catch (err) {
@@ -71,7 +87,7 @@ export default function PrinterControls({ imageUrl }: PrinterControlsProps) {
       setIsPrinting(false);
       setPrintProgress(0);
     }
-  }, [imageUrl]);
+  }, [imageUrl, options]);
 
   if (!isSupported) {
     return (
@@ -90,22 +106,104 @@ export default function PrinterControls({ imageUrl }: PrinterControlsProps) {
       {/* Connection status */}
       <div className="flex items-center gap-2 bg-white/70 px-4 py-2 rounded-full">
         <div
-          className={`w-4 h-4 rounded-full ${
-            status === "connected"
-              ? "bg-candy-green animate-pulse"
-              : status === "connecting"
+          className={`w-4 h-4 rounded-full ${status === "connected"
+            ? "bg-candy-green animate-pulse"
+            : status === "connecting"
               ? "bg-candy-yellow animate-pulse"
               : "bg-gray-300"
-          }`}
+            }`}
         />
         <span className="text-sm font-semibold text-candy-purple">
           {status === "connected"
             ? `${deviceName} ready!`
             : status === "connecting"
-            ? "Looking for printer..."
-            : "No printer connected"}
+              ? "Looking for printer..."
+              : "No printer connected"}
         </span>
       </div>
+
+      {/* Settings Toggle */}
+      <button
+        onClick={() => setShowSettings(!showSettings)}
+        className="text-xs font-bold text-candy-purple/70 hover:text-candy-purple underline"
+      >
+        {showSettings ? "Hide Print Settings" : "Show Print Settings"}
+      </button>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="w-full bg-white/40 rounded-xl p-4 text-sm flex flex-col gap-3 transition-all animate-fade-in">
+          <div className="flex flex-col gap-1">
+            <label className="font-semibold text-candy-purple text-xs">Dithering</label>
+            <select
+              value={options.dither}
+              onChange={(e) => setOptions(prev => ({ ...prev, dither: e.target.value as any }))}
+              className="rounded-lg border-2 border-candy-purple/10 px-2 py-1 text-candy-purple bg-white/80"
+            >
+              <option value="atkinson">Atkinson (Best)</option>
+              <option value="sierra">Sierra</option>
+              <option value="floyd">Floyd-Steinberg</option>
+              <option value="none">None (Threshold)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="font-semibold text-candy-purple text-xs flex justify-between">
+              Contrast <span>{options.contrast}</span>
+            </label>
+            <input
+              type="range"
+              min="-100"
+              max="100"
+              value={options.contrast}
+              onChange={(e) => setOptions(prev => ({ ...prev, contrast: parseInt(e.target.value) }))}
+              className="accent-candy-purple"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="font-semibold text-candy-purple text-xs flex justify-between">
+              Brightness <span>{options.brightness}</span>
+            </label>
+            <input
+              type="range"
+              min="-100"
+              max="100"
+              value={options.brightness}
+              onChange={(e) => setOptions(prev => ({ ...prev, brightness: parseInt(e.target.value) }))}
+              className="accent-candy-purple"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="font-semibold text-candy-purple text-xs flex justify-between">
+              Sharpen <span>{options.sharpen}</span>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={options.sharpen}
+              onChange={(e) => setOptions(prev => ({ ...prev, sharpen: parseInt(e.target.value) }))}
+              className="accent-candy-purple"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="font-semibold text-candy-purple text-xs flex justify-between">
+              Darkness (Energy) <span>{options.energy}</span>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="255"
+              value={options.energy}
+              onChange={(e) => setOptions(prev => ({ ...prev, energy: parseInt(e.target.value) }))}
+              className="accent-candy-purple"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Connect/Disconnect button */}
       {status === "disconnected" ? (
@@ -132,10 +230,9 @@ export default function PrinterControls({ imageUrl }: PrinterControlsProps) {
         className={`
           w-full py-4 px-6 rounded-2xl font-bold text-xl
           transition-all duration-300 flex items-center justify-center gap-2
-          ${
-            canPrint
-              ? "bg-gradient-print text-white hover:scale-105 shadow-candy-lg"
-              : "bg-gray-200 text-gray-400 cursor-not-allowed"
+          ${canPrint
+            ? "bg-gradient-print text-white hover:scale-105 shadow-candy-lg"
+            : "bg-gray-200 text-gray-400 cursor-not-allowed"
           }
         `}
       >

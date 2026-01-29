@@ -36,11 +36,83 @@ export function canvasToGrayscale(canvas: HTMLCanvasElement): Uint8Array {
     const r = imageData.data[i * 4];
     const g = imageData.data[i * 4 + 1];
     const b = imageData.data[i * 4 + 2];
-    // Use luminance formula
+  // Use luminance formula
     grayscale[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
   }
 
   return grayscale;
+}
+
+export function adjustBrightness(
+  grayscale: Uint8Array,
+  value: number
+): Uint8Array {
+  // value from -100 to 100
+  if (value === 0) return grayscale;
+  const newData = new Uint8Array(grayscale.length);
+  const v = Math.round((255 * value) / 100);
+
+  for (let i = 0; i < grayscale.length; i++) {
+    newData[i] = Math.min(255, Math.max(0, grayscale[i] + v));
+  }
+  return newData;
+}
+
+export function adjustContrast(
+  grayscale: Uint8Array,
+  value: number
+): Uint8Array {
+  // value from -100 to 100
+  if (value === 0) return grayscale;
+  const newData = new Uint8Array(grayscale.length);
+  const factor = (259 * (value + 255)) / (255 * (259 - value));
+
+  for (let i = 0; i < grayscale.length; i++) {
+    newData[i] = Math.min(255, Math.max(0, factor * (grayscale[i] - 128) + 128));
+  }
+  return newData;
+}
+
+export function sharpenImage(
+  grayscale: Uint8Array,
+  width: number,
+  height: number,
+  amount: number = 0 // 0 to 100 (percentage mix)
+): Uint8Array {
+  if (amount <= 0) return grayscale;
+
+  const newData = new Uint8Array(grayscale.length);
+  const mix = Math.min(1, Math.max(0, amount / 100));
+  
+  // Simple kernel for sharpening
+  //  0 -1  0
+  // -1  5 -1
+  //  0 -1  0
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      
+      if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+        newData[idx] = grayscale[idx];
+        continue;
+      }
+
+      const top = grayscale[idx - width];
+      const bottom = grayscale[idx + width];
+      const left = grayscale[idx - 1];
+      const right = grayscale[idx + 1];
+      const center = grayscale[idx];
+
+      const val = 5 * center - left - right - top - bottom;
+      const sharpened = Math.min(255, Math.max(0, val));
+      
+      // Blend original with sharpened based on amount
+      newData[idx] = Math.round(center * (1 - mix) + sharpened * mix);
+    }
+  }
+  
+  return newData;
 }
 
 export function applyThreshold(
@@ -83,6 +155,82 @@ export function applyFloydSteinbergDithering(
   return binary;
 }
 
+export function applyAtkinsonDithering(
+  grayscale: Uint8Array,
+  width: number,
+  height: number
+): Uint8Array {
+  const buffer = new Float32Array(grayscale);
+  const binary = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const oldPixel = buffer[i];
+      const newPixel = oldPixel > 128 ? 255 : 0;
+      binary[i] = newPixel > 128 ? 1 : 0;
+      const error = oldPixel - newPixel;
+
+      // Atkinson error diffusion
+      //       X   1/8 1/8
+      //   1/8 1/8 1/8
+      //       1/8
+
+      const errDiv8 = error / 8;
+
+      if (x + 1 < width) buffer[i + 1] += errDiv8;
+      if (x + 2 < width) buffer[i + 2] += errDiv8;
+      
+      if (y + 1 < height) {
+        if (x > 0) buffer[i + width - 1] += errDiv8;
+        buffer[i + width] += errDiv8;
+        if (x + 1 < width) buffer[i + width + 1] += errDiv8;
+      }
+      
+      if (y + 2 < height) {
+        buffer[i + 2 * width] += errDiv8;
+      }
+    }
+  }
+
+  return binary;
+}
+
+export function applySierraDithering(
+  grayscale: Uint8Array,
+  width: number,
+  height: number
+): Uint8Array {
+  const buffer = new Float32Array(grayscale);
+  const binary = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const oldPixel = buffer[i];
+      const newPixel = oldPixel > 128 ? 255 : 0;
+      binary[i] = newPixel > 128 ? 1 : 0;
+      const error = oldPixel - newPixel;
+
+      // Sierra Lite error diffusion
+      //       X   2/4
+      //   1/4 1/4
+
+      const errDiv4 = error / 4;
+      const errMul2Div4 = (error * 2) / 4;
+
+      if (x + 1 < width) buffer[i + 1] += errMul2Div4;
+
+      if (y + 1 < height) {
+         if (x > 0) buffer[i + width - 1] += errDiv4;
+         buffer[i + width] += errDiv4;
+      }
+    }
+  }
+
+  return binary;
+}
+
 export function binaryToBitmap(
   binary: Uint8Array,
   width: number
@@ -109,17 +257,54 @@ export function binaryToBitmap(
   return bitmap;
 }
 
+export type DitherAlgo = 'none' | 'floyd' | 'atkinson' | 'sierra';
+
+export interface ImageProcessingOptions {
+  dither: DitherAlgo;
+  threshold?: number;
+  brightness?: number; // -100 to 100
+  contrast?: number; // -100 to 100
+  sharpen?: number; // 0 to 100
+}
+
 export async function processImageForPrinter(
   imageSrc: string,
-  useDithering: boolean = false
+  options: ImageProcessingOptions = { dither: 'floyd' }
 ): Promise<{ bitmap: Uint8Array; width: number; height: number }> {
   const img = await loadImage(imageSrc);
   const canvas = imageToCanvas(img, PRINTER_WIDTH);
-  const grayscale = canvasToGrayscale(canvas);
+  let grayscale = canvasToGrayscale(canvas);
 
-  const binary = useDithering
-    ? applyFloydSteinbergDithering(grayscale, canvas.width, canvas.height)
-    : applyThreshold(grayscale);
+  // Apply preprocessing
+  if (options.brightness && options.brightness !== 0) {
+    grayscale = adjustBrightness(grayscale, options.brightness);
+  }
+  
+  if (options.contrast && options.contrast !== 0) {
+    grayscale = adjustContrast(grayscale, options.contrast);
+  }
+  
+  if (options.sharpen && options.sharpen > 0) {
+    grayscale = sharpenImage(grayscale, canvas.width, canvas.height, options.sharpen);
+  }
+
+  let binary: Uint8Array;
+  
+  switch (options.dither) {
+    case 'floyd':
+      binary = applyFloydSteinbergDithering(grayscale, canvas.width, canvas.height);
+      break;
+    case 'atkinson':
+      binary = applyAtkinsonDithering(grayscale, canvas.width, canvas.height);
+      break;
+    case 'sierra':
+      binary = applySierraDithering(grayscale, canvas.width, canvas.height);
+      break;
+    case 'none':
+    default:
+      binary = applyThreshold(grayscale, options.threshold ?? 128);
+      break;
+  }
 
   const bitmap = binaryToBitmap(binary, canvas.width);
 

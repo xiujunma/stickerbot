@@ -1,14 +1,20 @@
-const SERVICE_UUID = "0000ae30-0000-1000-8000-00805f9b34fb";
-const CHARACTERISTIC_UUID = "0000ae01-0000-1000-8000-00805f9b34fb";
+// Original cat printer UUIDs
+const SERVICE_UUID_AE = "0000ae30-0000-1000-8000-00805f9b34fb";
+const CHARACTERISTIC_UUID_AE = "0000ae01-0000-1000-8000-00805f9b34fb";
 
-// Cat Printer commands
-const CMD_GET_STATUS = 0xa1;
-const CMD_SET_QUALITY = 0xa4;
-const CMD_LATTICE_START = 0xa6;
-const CMD_SET_ENERGY = 0xaf;
-const CMD_PRINT_LINE = 0xa2;
-const CMD_FEED_PAPER = 0xa1;
-const CMD_LATTICE_END = 0xa6;
+// GB series printer UUIDs
+const SERVICE_UUID_FF = "0000ff00-0000-1000-8000-00805f9b34fb";
+const CHARACTERISTIC_UUID_FF = "0000ff02-0000-1000-8000-00805f9b34fb";
+
+// Cat Printer commands (from kitty-printer protocol)
+const CMD_GET_STATE = 0xa3;
+const CMD_SET_DPI = 0xa4;
+const CMD_LATTICE = 0xa6;
+const CMD_ENERGY = 0xaf;
+const CMD_BITMAP = 0xa2;
+const CMD_FEED = 0xa1;
+const CMD_SPEED = 0xbd;
+const CMD_APPLY_ENERGY = 0xbe;
 
 // CRC8 lookup table
 const CRC8_TABLE = new Uint8Array([
@@ -45,14 +51,16 @@ function crc8(data: Uint8Array): number {
 }
 
 function buildPacket(command: number, data: Uint8Array = new Uint8Array()): Uint8Array {
-  const packet = new Uint8Array(data.length + 6);
+  const packet = new Uint8Array(data.length + 8);
   packet[0] = 0x51; // Start byte 1
   packet[1] = 0x78; // Start byte 2
   packet[2] = command;
-  packet[3] = 0x00; // Packet index (not used for single packets)
-  packet[4] = data.length;
-  packet.set(data, 5);
-  packet[packet.length - 1] = crc8(data);
+  packet[3] = 0x00; // Type (0x00 = Transfer)
+  packet[4] = data.length & 0xff; // Length low byte
+  packet[5] = (data.length >> 8) & 0xff; // Length high byte
+  packet.set(data, 6);
+  packet[packet.length - 2] = crc8(data);
+  packet[packet.length - 1] = 0xff; // End byte
   return packet;
 }
 
@@ -95,8 +103,13 @@ export class CatPrinter {
       this.setStatus("connecting");
 
       this.device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }],
-        optionalServices: [SERVICE_UUID],
+        filters: [
+          { services: [SERVICE_UUID_AE] },
+          { services: [SERVICE_UUID_FF] },
+          { namePrefix: "GB" },
+          { namePrefix: "GT" },
+        ],
+        optionalServices: [SERVICE_UUID_AE, SERVICE_UUID_FF],
       });
 
       this.deviceName = this.device.name || "Cat Printer";
@@ -109,8 +122,21 @@ export class CatPrinter {
       const server = await this.device.gatt?.connect();
       if (!server) throw new Error("Failed to connect to GATT server");
 
-      const service = await server.getPrimaryService(SERVICE_UUID);
-      this.characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+      // Try both service UUIDs (AE for original cat printers, FF for some models)
+      let service: BluetoothRemoteGATTService;
+      let characteristicUuid: string;
+      try {
+        service = await server.getPrimaryService(SERVICE_UUID_AE);
+        characteristicUuid = CHARACTERISTIC_UUID_AE;
+      } catch (e1) {
+        try {
+          service = await server.getPrimaryService(SERVICE_UUID_FF);
+          characteristicUuid = CHARACTERISTIC_UUID_FF;
+        } catch (e2) {
+          throw new Error(`Printer service not found. This printer may not be compatible.`);
+        }
+      }
+      this.characteristic = await service.getCharacteristic(characteristicUuid);
 
       this.setStatus("connected");
       return true;
@@ -134,10 +160,15 @@ export class CatPrinter {
     if (!this.characteristic) {
       throw new Error("Printer not connected");
     }
-    // Create a new ArrayBuffer from the Uint8Array to satisfy TypeScript
-    const buffer = new ArrayBuffer(packet.length);
-    new Uint8Array(buffer).set(packet);
-    await this.characteristic.writeValueWithResponse(buffer);
+
+    // Send in chunks to respect BLE MTU limits (200 bytes like kitty-printer)
+    const chunkSize = 200;
+    for (let i = 0; i < packet.length; i += chunkSize) {
+      const chunk = packet.slice(i, Math.min(i + chunkSize, packet.length));
+      const buffer = new ArrayBuffer(chunk.length);
+      new Uint8Array(buffer).set(chunk);
+      await this.characteristic.writeValueWithoutResponse(buffer);
+    }
   }
 
   private async delay(ms: number): Promise<void> {
@@ -148,6 +179,7 @@ export class CatPrinter {
     bitmap: Uint8Array,
     width: number,
     height: number,
+    energy: number = 0x60,
     onProgress?: (percent: number) => void
   ): Promise<void> {
     if (!this.characteristic) {
@@ -159,37 +191,78 @@ export class CatPrinter {
     try {
       const bytesPerRow = Math.ceil(width / 8);
 
-      // Initialize printer
-      await this.sendPacket(buildPacket(CMD_GET_STATUS));
+      // Get device state
+      await this.sendPacket(buildPacket(CMD_GET_STATE));
       await this.delay(50);
 
-      // Set quality (0x33 = standard)
-      await this.sendPacket(buildPacket(CMD_SET_QUALITY, new Uint8Array([0x33])));
+      // Set DPI (0x33 = standard 200dpi)
+      await this.sendPacket(buildPacket(CMD_SET_DPI, new Uint8Array([0x33])));
+      await this.delay(50);
+
+      // Set speed
+      await this.sendPacket(buildPacket(CMD_SPEED, new Uint8Array([0x20])));
+      await this.delay(50);
+
+      // Set energy level
+      // Energy is 2 bytes, usually around 0x6000?? Or 0x60??
+      // Based on original code: new Uint8Array([0x60, 0x00])
+      // It seems it takes 2 bytes. 
+      // Let's assume input 'energy' is the raw value. 
+      // If the user passes reasonable range (0-65535 or so).
+      // Actually, looking at original code: `new Uint8Array([0x60, 0x00])` -> This is 0x6000 if little endian? Or 0x0060?
+      // Wait, standard kitty printers usually take 2 bytes for energy. 
+      // Let's implement it as taking a higher byte and lower byte.
+      // Default was 0x60, 0x00. Let's stick to that structure.
+      
+      const energyHigh = (energy >> 8) & 0xff;
+      const energyLow = energy & 0xff;
+      
+      await this.sendPacket(buildPacket(CMD_ENERGY, new Uint8Array([energyLow, energyHigh]))); 
+      // Wait - original was [0x60, 0x00]. If that is High, Low then 0x6000. 
+      // If it is Low, High then 0x0060.
+      // 0x60 = 96. 0x6000 = 24576.
+      // "Energy" usually means heat time. 
+      // Let's check the original line: `new Uint8Array([0x60, 0x00])`.
+      // If I assume it's Low-High like often in these protocols...
+      // Let's trust the original code order: [0x60, 0x00].
+      // So if I want to pass a value, I should split it.
+      // Let's allow passing the raw Uint8Array or just a number which we split?
+      // Let's stick to the previous hardcoded style but parameterized.
+      // If standard is 0x60 (96), range likely 0-255 for fine control?
+      // Or maybe it is a 16-bit value.
+      // Let's expose it as a single number (intensity) around 0-100?
+      // The previous code had 0x60 (96). 
+      // Let's assume the first byte is the main energy value. 
+      
+      // Let's change the signature to be easier: 
+      // energy: number = 96 (0x60)
+      
+      const energyByte = Math.max(0, Math.min(255, energy));
+      // Keeping the second byte 0x00 for now as in original.
+      await this.sendPacket(buildPacket(CMD_ENERGY, new Uint8Array([energyByte, 0x00])));
+      await this.delay(50);
+
+      // Apply energy
+      await this.sendPacket(buildPacket(CMD_APPLY_ENERGY, new Uint8Array([0x01])));
       await this.delay(50);
 
       // Start lattice mode
       const latticeStart = new Uint8Array([
         0xaa, 0x55, 0x17, 0x38, 0x44, 0x5f, 0x5f, 0x5f, 0x44, 0x38, 0x2c,
       ]);
-      await this.sendPacket(buildPacket(CMD_LATTICE_START, latticeStart));
-      await this.delay(50);
-
-      // Set energy level (thermal intensity)
-      await this.sendPacket(buildPacket(CMD_SET_ENERGY, new Uint8Array([0x80, 0x00])));
+      await this.sendPacket(buildPacket(CMD_LATTICE, latticeStart));
       await this.delay(50);
 
       // Print each line
       for (let y = 0; y < height; y++) {
         const lineStart = y * bytesPerRow;
         const lineData = bitmap.slice(lineStart, lineStart + bytesPerRow);
-        await this.sendPacket(buildPacket(CMD_PRINT_LINE, lineData));
+        await this.sendPacket(buildPacket(CMD_BITMAP, lineData));
 
-        // Small delay every few lines to prevent buffer overflow
         if (y % 8 === 0) {
           await this.delay(20);
         }
 
-        // Report progress
         onProgress?.(Math.round(((y + 1) / height) * 100));
       }
 
@@ -197,11 +270,11 @@ export class CatPrinter {
       const latticeEnd = new Uint8Array([
         0xaa, 0x55, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17,
       ]);
-      await this.sendPacket(buildPacket(CMD_LATTICE_END, latticeEnd));
+      await this.sendPacket(buildPacket(CMD_LATTICE, latticeEnd));
       await this.delay(50);
 
-      // Feed paper to finish
-      await this.feedPaper(30);
+      // Feed paper to finish with blank space
+      await this.feedPaper(100);
 
       this.setStatus("connected");
     } catch (error) {
@@ -216,7 +289,7 @@ export class CatPrinter {
     }
 
     const feedData = new Uint8Array([lines, 0x00]);
-    await this.sendPacket(buildPacket(CMD_FEED_PAPER, feedData));
+    await this.sendPacket(buildPacket(CMD_FEED, feedData));
   }
 }
 

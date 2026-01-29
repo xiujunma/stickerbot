@@ -43,7 +43,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ imageUrl });
+    // Fetch the image and convert to base64 to avoid CORS issues
+    const imageResponse = await fetch(imageUrl);
+    const arrayBuffer = await imageResponse.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+    const dataUrl = `data:image/png;base64,${base64}`;
+
+    return NextResponse.json({ imageUrl: dataUrl });
   } catch (error) {
     console.error("Image generation error:", error);
 
